@@ -1,0 +1,8 @@
+version: "3.5"
+services:
+    max-goldt-bot:
+        env_file: .env
+        container_name: MaxGoldtBot
+        build:
+            context: .
+            dockerfile: Dockerfile

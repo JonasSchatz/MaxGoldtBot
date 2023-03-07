@@ -1,0 +1,8 @@
+.env.sample
+.git
+.gitignore
+.vscode
+venv
+CHANGELOG.md
+LICENSE
+README.md

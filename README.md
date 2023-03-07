@@ -16,118 +16,47 @@ to read the article.
 
 This program is licensed under the MIT license, see the LICENSE file. To see what
 has changed over time, have a look at
-[CHANGELOG.md](https://github.com/pille1842/MaxGoldtBot/blob/master/CHANGELOG.md).
+[CHANGELOG.md](https://github.com/jonasschatz/MaxGoldtBot/blob/master/CHANGELOG.md).
 
 ## Prerequisites
 
 To run this bot, you will need:
 
-- Python 3 (tested with 3.5.2 and 3.4.2 on Ubuntu and Debian)
+- Python 3 (tested with 3.9 on MacOS)
 - The following packages (install via `pip` / `pip3`):
-    - `archiveis` (a simple wrapper for archive.is)
-    - `praw` (the Python Reddit wrapper)
-
-## Setup
-
-Rename the `MaxGoldtBot.ini.sample` file to `MaxGoldtBot.ini`. In this file,
-store the configuration values for your bot. See section [Configuration](#configuration)
-for more information.
-
-## Running the Bot
-
-To run the bot, simply call it with the name of a subreddit as an argument:
-
-```
-$ ./MaxGoldtBot.py MySubreddit
-```
-
-### Running the bot as a systemd service
-
-If you wish to run this bot as a systemd user service, modify
-`MaxGoldtBot@.service` and fill in the relevant paths. Then copy the file to
-`~/.config/systemd/user/`:
-
-```
-$ mkdir -pv ~/.config/systemd/user && cp MaxGoldtBot@.service ~/.config/systemd/user/
-```
-
-If you wish to run this service on boot (e.g. not only when you are logged in),
-you need to enable lingering (see [loginctl man page](https://www.freedesktop.org/software/systemd/man/loginctl.html)):
-
-```
-# loginctl enable-linger YOURUSERNAME
-```
-
-After that, you can enable the bot service for any subreddit with the following
-command:
-
-```
-$ systemctl --user enable MaxGoldtBot@SUBREDDIT.service
-```
-
-To start the bot immediately, run:
-
-```
-$ systemctl --user start MaxGoldtBot@SUBREDDIT.service
-```
-
-## Command-line options
-
-### Configuration file
-
-By default, the bot reads its configuration from `MaxGoldtBot.ini` in the
-current directory. However, you can pass any configuration file name you like to
-the `--config` option.
-
-### Logging
-
-By default, the bot will log to standard output and only display messages with
-a loglevel of WARNING or above. Use `--loglevel` to change the minimum loglevel
-(possible values are DEBUG, INFO, WARNING, ERROR, CRITICAL).
-
-If you wish to log messages into a file instead of standard output, you can pass
-a filename to the `--logfile` option.
-
-### Processed comments
-
-The bot keeps a list of already processed comments to avert responding to any
-comments twice. By default, this list is stored in a file called
-`processed_comments_SUBREDDIT.txt` in the current directory. You can override
-the path to this file with the `--procfile` option.
-
-### Processed submissions
-
-The bot also keeps a list of already processed submissions to avert responding
-to any submissions twice. By default, this list is stored in a file called
-`processed_submissions_SUBREDDIT.txt` in the current directory. You can override
-the path to this file with the `--prosfile` option.
-
-### Sleep time
-
-When the bot gets an API exception from Reddit (e.g. because the bot is trying
-too hard or because there are connectivity issues), it will go to sleep for
-a while. By default, this sleep time is 15 minutes. However, you can override
-this time with `--sleeptime SECONDS`.
+  - `archiveis` (a simple wrapper for archive.is)
+  - `praw` (the Python Reddit wrapper)
+- Docker / docker-compose. While the latter might seem like overkill, it is a very
+  convenient way to set up the bot with the correct configuration.
 
 ## Configuration
 
-The sample configuration file (`MaxGoldtBot.ini.sample`) should give you a good
-idea of what you need to configure to make this bot work. The configuration file
-should contain the following items in a section called `[MaxGoldtBot]`:
+The sample configuration file (`.env.sample`) should give you a good
+idea of what you need to configure to make this bot work. Rename it to `.env` to
+make it work. The configuration file should contain the following items:
 
 - **`client_id`** -- this is the ID of your Reddit application. To obtain one,
-  go to reddit.com > preferences > apps and create a new app of type "script".
-  The client ID is displayed beneath your application's name.
+  go to reddit.com > preferences > apps (old reddit) or User Settings > Safety &
+  Privacy > Manage third-party app authorization (new reddit) and create a new
+  app of type "script". The client ID is displayed beneath your application's name.
 - **`client_secret`** -- this is the secret key of your Reddit application.
   Never let anyone see this! You can find it in the details of your app under
   reddit.com > preferences > apps.
 - **`user_agent`** -- this is a User-Agent string that the bot will provide to
-  Reddit when making requests. The default sample is a good idea. Generally, the
-  User-Agent string should have the following format:
+  Reddit when making requests. Generally, the user agent string should have the
+  following format:
   `platform:tld.yourdomain.yourapp:vX.Y.Z (by /u/YourUsername)`
 - **`username`** -- this is the username of your Reddit bot.
 - **`password`** -- this is your Reddit bot's password. Without it, the bot can
   read Reddit comments, but cannot reply to them.
+- **`subreddit`** -- The subreddit the bot should be active on, e.g. `"test"`.
+  Make sure to ask the Mod's permission before you let it loose. On
+  [r/de](www.reddit.com/r/de) it is not allowed due to source derailment.
+
+## Deployment
+
+After entering your details in the `.env` file, you can run the bot by simply
+running `docker compose up` in your terminal.
 
 ## Subreddit
 

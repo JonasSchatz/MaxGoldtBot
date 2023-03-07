@@ -3,14 +3,16 @@
 # with a quote from writer Max Goldt and an archive.is version of the linked
 # bild.de article(s)
 #
-# Version:      0.4.0
-# Author:       Eric Haberstroh <eric@erixpage.de>
+# Version:      0.5.0
+# Authors:      Eric Haberstroh <eric@erixpage.de>,
+#               Jonas Schatz <jonas.schatz+github@googlemail.com>
 # License:      MIT <https://opensource.org/licenses/MIT>
 
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, List
 import archiveis
-from urllib.parse import urlparse
-import argparse
-import configparser
+from urllib.parse import ParseResult, urlparse
 import logging
 import os
 import praw
@@ -19,267 +21,235 @@ import re
 import sys
 import time
 
-class MaxGoldtBotCommentParser:
-    processed_comments = []
-    processed_comments_file = ""
-    config = None
-    reddit = None
-    subreddit = ""
-    sleeptime = 0
-    regex = '(?<!/)(http[s]?://(?:www|m).bild.de/(?:[-a-zA-Z0-9/_\.\?=,])+)'
 
-    def __init__(self, arguments):
-        self.config = configparser.ConfigParser()
-        logging.debug('[comments] Reading configuration file %s', arguments.config_file)
-        self.config.read(arguments.config_file)
-        logging.debug('[comments] Creating Reddit instance for username %s', self.config['MaxGoldtBot']['username'])
-        self.reddit = praw.Reddit(client_id=self.config['MaxGoldtBot']['client_id'],
-                                  client_secret=self.config['MaxGoldtBot']['client_secret'],
-                                  user_agent=self.config['MaxGoldtBot']['user_agent'],
-                                  username=self.config['MaxGoldtBot']['username'],
-                                  password=self.config['MaxGoldtBot']['password'])
-        self.sleeptime = arguments.sleeptime
-        self.subreddit = arguments.subreddit
-        if arguments.procfile:
-            self.processed_comments_file = arguments.procfile
-        else:
-            self.processed_comments_file = 'processed_comments_%s.txt' % arguments.subreddit
-        logging.debug('[comments] Storing processed comments in %s', self.processed_comments_file)
+@dataclass
+class Config:
+    subreddit: str
+    client_id: str
+    client_secret: str
+    user_agent: str
+    username: str
+    password: str
+
+    def __init__(self):
+        self.subreddit = os.environ["subreddit"]
+        self.client_id = os.environ["client_id"]
+        self.client_secret = os.environ["client_secret"]
+        self.user_agent = os.environ["user_agent"]
+        self.username = os.environ["username"]
+        self.password = os.environ["password"]
+
+
+class MaxGoldtBotEntityParser(ABC):
+    regex: str = "(?<!/)(http[s]?://(?:www|m).bild.de/(?:[-a-zA-Z0-9/_\.\?=,])+)"
+    sleeptime: int = 1500
+    processed_entities: List[str] = []
+
+    processed_entities_file: str
+    entity_type: str
+    reddit: praw.Reddit
+    subreddit: Any
+    entity_provider: Any
+
+    def __init__(self, config: Config):
+
+        logging.debug(
+            f"{self.entity_type} Creating Reddit instance for username {config.username}"
+        )
+
+        self.reddit = praw.Reddit(
+            client_id=config.client_id,
+            client_secret=config.client_secret,
+            user_agent=config.user_agent,
+            username=config.username,
+            password=config.password,
+        )
+
+        self.subreddit = self.reddit.subreddit(config.subreddit)
+
+        self.processed_entities_file: str = (
+            f"processed_{self.entity_type}_file_{config.subreddit}.txt"
+        )
+
+        logging.debug(
+            f"[{self.entity_type}] Storing processed entites in {self.processed_entities_file}"
+        )
+
         try:
-            with open(self.processed_comments_file) as file:
+            with open(self.processed_entities_file, "r+") as file:
                 for line in file:
                     line = line.strip()
-                    self.processed_comments.append(line)
-            logging.debug('[comments] Read %d processed comments in total', len(self.processed_comments))
+                    self.processed_entities.append(line)
+            logging.debug(
+                f"[{self.entity_type}] Read {len(self.processed_entities)} processed {self.entity_type} in total"
+            )
         except (FileNotFoundError, IOError):
-            logging.warning('[comments] File %s could not be read', self.processed_comments_file)
+            logging.warning(
+                f"[{self.entity_type}] File {self.processed_entities_file} could not be read"
+            )
 
     def run(self):
         while True:
             try:
-                for comment in self.reddit.subreddit(self.subreddit).stream.comments():
-                    if comment.id not in self.processed_comments:
-                        self.handle_comment(comment)
-                        self.processed_comments.append(comment.id)
-                        try:
-                            with open(self.processed_comments_file, 'a') as file:
-                                file.write(comment.id + '\n')
-                        except IOError as e:
-                            logging.error('[comments] IO error while writing to %s: %s', self.processed_comments_file, e)
-                        if len(self.processed_comments) > 600:
-                            logging.info('[comments] Pruning %s to 500 comments', self.processed_comments_file)
-                            try:
-                                with open(self.processed_comments_file, 'w') as file:
-                                    for comment in self.processed_comments[-500:]:
-                                        file.write(comment + '\n')
-                                self.processed_comments = self.processed_comments[-500:]
-                            except IOError as e:
-                                logging.error('[comments] IO error while writing to %s: %s', self.processed_comments_file, e)
-            except (praw.exceptions.APIException,
-                    praw.exceptions.ClientException,
-                    prawcore.exceptions.RequestException) as e:
-                logging.warning('[comments] Got an exception: %s', e)
-                logging.warning('[comments] Will go to sleep for %d seconds', self.sleeptime)
+                for entity in self.entity_provider:
+                    if entity.id in self.processed_entities:
+                        continue
+                    self.handle_entity(entity)
+                    self.processed_entities.append(entity.id)
+
+                try:
+                    with open(self.processed_entites_file, "a") as file:
+                        file.write(entity.id + "\n")
+                except IOError as e:
+                    logging.error(
+                        f"[{self.entity_type}] IO error while writing to {self.processed_entities_file}: {e}"
+                    )
+                if len(self.processed_entities) > 600:
+                    self.processed_entities = self.prune_logfile()
+
+            except (
+                praw.exceptions.APIException,
+                praw.exceptions.ClientException,
+                prawcore.exceptions.RequestException,
+            ) as e:
+                logging.warning(f"[{self.entity_type}] Got an exception: {e}")
+                logging.warning(
+                    f"[{self.entity_type}] Will go to sleep for {self.sleeptime} seconds"
+                )
                 time.sleep(self.sleeptime)
             except KeyboardInterrupt:
-                logging.critical('[comments] Bot has been killed by keyboard interrupt. Exiting')
+                logging.critical(
+                    f"[{self.entity_type}] Bot has been killed by keyboard interrupt. Exiting"
+                )
                 sys.exit(0)
 
-    def handle_comment(self, comment):
-        logging.debug('[comments] Processing new comment %s', comment.id)
-        urls = re.findall(self.regex, comment.body)
+    def handle_entity(self, entity):
+        logging.debug("[comments] Processing new comment %s", entity.id)
+        urls: List[str] = self.extract_urls
         if urls:
-            logging.info('[comments] New comment %s with bild.de URLs found', comment.id)
-            archive_urls = []
-            bildplus = 0
-            for url in urls:
-                parsed_url = urlparse(url)
-                if parsed_url.path.startswith('/bild-plus/'):
-                    logging.info('[comments] Skipping %s because it is probably a BILD+ link', url)
-                    bildplus += 1
-                    continue
-                logging.info('[comments] Capturing %s', url)
-                archive_url = archiveis.capture(url)
-                if archive_url:
-                    archive_urls.append(archive_url)
-                    logging.info('[comments] Captured: %s', archive_url)
-                else:
-                    logging.warning('[comments] Got an empty archive.is URL back. Something is wrong')
-            if len(urls) != len(archive_urls) + bildplus:
-                logging.warning('[comments] Found %d bild.de URLs, but got only %d archive.is links', len(urls), len(archive_urls))
+            logging.info(
+                f"[{self.entity_type}] New {self.entity_type} with bild.de URLs found"
+            )
+            archive_urls: List[str] = self.search_and_archive_bild_urls(urls)
+
             if archive_urls:
-                links = "\n- ".join(archive_urls)
-                body = ("> Diese Zeitung ist ein Organ der Niedertracht. Es ist falsch, sie zu lesen.\n"
-                        "> Jemand, der zu dieser Zeitung beiträgt, ist gesellschaftlich absolut inakzeptabel.\n"
-                        "> Es wäre verfehlt, zu einem ihrer Redakteure freundlich oder auch nur höflich zu sein.\n"
-                        "> Man muß so unfreundlich zu ihnen sein, wie es das Gesetz gerade noch zuläßt.\n"
-                        "> Es sind schlechte Menschen, die Falsches tun.\n\n"
-                        "[Max Goldt](https://de.wikipedia.org/wiki/Max_Goldt), deutscher Schriftsteller\n\n"
-                        "Du kannst diesen Artikel auf archive.is lesen, wenn du nicht auf bild.de gehen willst:\n\n- " \
-                        + links + \
-                        "\n\n"
-                        "----\n\n"
-                        "^^[Info](https://www.reddit.com/r/MaxGoldtBot)&nbsp;|&nbsp;"
-                        "[Autor](https://www.reddit.com/u/pille1842)&nbsp;|&nbsp;"
-                        "[GitHub](https://github.com/pille1842/MaxGoldtBot)&nbsp;|&nbsp;"
-                        "[Warum&nbsp;die&nbsp;Bild&nbsp;schlecht&nbsp;ist]"
-                        "(http://www.bildblog.de/62600/warum-wir-gegen-die-bild-zeitung-kaempfen/)")
-                comment.reply(body)
-                logging.info('[comments] Replied to %s with %d links', comment.id, len(archive_urls))
+                body = self.create_submission_body(archive_urls)
+                entity.reply(body)
+                logging.info(
+                    "[comments] Replied to %s with %d links",
+                    entity.id,
+                    len(archive_urls),
+                )
             else:
-                logging.warning('[comments] No reply to %s: %d bild.de links found, none archived', comment.id, len(urls))
-        else:
-            logging.debug('[comments] No relevant URLs found in %s', comment.id)
+                logging.warning(
+                    "[comments] No reply to %s: %d bild.de links found, none archived",
+                    entity.id,
+                    len(urls),
+                )
 
-class MaxGoldtBotSubmissionParser:
-    processed_submissions = []
-    processed_submissions_file = ""
-    config = None
-    reddit = None
-    subreddit = ""
-    sleeptime = 0
-    regex = '(?<!/)(http[s]?://(?:www|m).bild.de/(?:[-a-zA-Z0-9/_\.\?=,])+)'
-
-    def __init__(self, arguments):
-        self.config = configparser.ConfigParser()
-        logging.debug('[submissions] Reading configuration file %s', arguments.config_file)
-        self.config.read(arguments.config_file)
-        logging.debug('[submissions] Creating Reddit instance for username %s', self.config['MaxGoldtBot']['username'])
-        self.reddit = praw.Reddit(client_id=self.config['MaxGoldtBot']['client_id'],
-                                  client_secret=self.config['MaxGoldtBot']['client_secret'],
-                                  user_agent=self.config['MaxGoldtBot']['user_agent'],
-                                  username=self.config['MaxGoldtBot']['username'],
-                                  password=self.config['MaxGoldtBot']['password'])
-        self.sleeptime = arguments.sleeptime
-        self.subreddit = arguments.subreddit
-        if arguments.prosfile:
-            self.processed_submissions_file = arguments.prosfile
         else:
-            self.processed_submissions_file = 'processed_submissions_%s.txt' % arguments.subreddit
-        logging.debug('[submissions] Storing processed submissions in %s', self.processed_submissions_file)
+            logging.debug(f"[{self.entity_type}] No relevant URLs found in {entity.id}")
+
+    @abstractmethod
+    def extract_urls(self, entity) -> List[str]:
+        pass
+
+    def search_and_archive_bild_urls(self, urls: List[str]) -> List[str]:
+        archive_urls: List[str] = []
+        bildplus: int = 0
+
+        for url in urls:
+            parsed_url: ParseResult = urlparse(url)
+            if parsed_url.path.startswith("/bild-plus/"):
+                logging.info(
+                    f"[{self.entity_type}] Skipping {url} because it is probably a BILD+ link"
+                )
+                bildplus += 1
+                continue
+            logging.info(f"[{self.entity_type}] Capturing url")
+            archive_url: str = archiveis.capture(url)
+            if archive_url:
+                archive_urls.append(archive_url)
+                logging.info(f"[{self.entity_type}] Captured: {archive_url}")
+            else:
+                logging.warning(
+                    f"[{self.entity_type}] Got an empty archive.is URL back. Something is wrong"
+                )
+        if len(urls) != len(archive_urls) + bildplus:
+            logging.warning(
+                f"[{self.entity_type}] Found {len(urls)} bild.de URLs, but got only {len(archive_urls)} archive.is links"
+            )
+
+        return archive_urls
+
+    def create_submission_body(archive_urls: List[str]) -> str:
+        links: str = "\n- ".join(archive_urls)
+        body: str = (
+            "> Diese Zeitung ist ein Organ der Niedertracht. Es ist falsch, sie zu lesen.\n"
+            "> Jemand, der zu dieser Zeitung beiträgt, ist gesellschaftlich absolut inakzeptabel.\n"
+            "> Es wäre verfehlt, zu einem ihrer Redakteure freundlich oder auch nur höflich zu sein.\n"
+            "> Man muß so unfreundlich zu ihnen sein, wie es das Gesetz gerade noch zuläßt.\n"
+            "> Es sind schlechte Menschen, die Falsches tun.\n\n"
+            "[Max Goldt](https://de.wikipedia.org/wiki/Max_Goldt), deutscher Schriftsteller\n\n"
+            "Du kannst diesen Artikel auf archive.is lesen, wenn du nicht auf bild.de gehen willst:\n\n- "
+            + links
+            + "\n\n"
+            "----\n\n"
+            "^^[Info](https://www.reddit.com/r/MaxGoldtBot)&nbsp;|&nbsp;"
+            "[Autor](https://www.reddit.com/u/joni_corazon)&nbsp;|&nbsp;"
+            "[GitHub](https://github.com/jonasschatz/MaxGoldtBot)&nbsp;|&nbsp;"
+            "[Warum&nbsp;die&nbsp;Bild&nbsp;schlecht&nbsp;ist]"
+            "(http://www.bildblog.de/62600/warum-wir-gegen-die-bild-zeitung-kaempfen/)"
+        )
+        return body
+
+    def prune_logfile(self):
+        logging.info(
+            f"[{self.entity_type}] Pruning {self.processed_entities_file} to 500 {self.entity_type}"
+        )
         try:
-            with open(self.processed_submissions_file) as file:
-                for line in file:
-                    line = line.strip()
-                    self.processed_submissions.append(line)
-            logging.debug('[submissions] Read %d processed submissions in total', len(self.processed_submissions))
-        except (FileNotFoundError, IOError):
-            logging.warning('[submissions] File %s could not be read', self.processed_submissions_file)
+            with open(self.processed_entities, "w") as file:
+                for entity in self.processed_entities[-500:]:
+                    file.write(entity + "\n")
+            return self.processed_entities[-500:]
+        except IOError as e:
+            logging.error(
+                f"{[self.entity_type]} IO error while writing to {self.processed_entities_file}: {e}"
+            )
 
-    def run(self):
-        while True:
-            try:
-                for submission in self.reddit.subreddit(self.subreddit).stream.submissions():
-                    if submission.id not in self.processed_submissions:
-                        self.handle_submission(submission)
-                        self.processed_submissions.append(submission.id)
-                        try:
-                            with open(self.processed_submissions_file, 'a') as file:
-                                file.write(submission.id + '\n')
-                        except IOError as e:
-                            logging.error('[submissions] IO error while writing to %s: %s', self.processed_submissions_file, e)
-                        if len(self.processed_submissions) > 600:
-                            logging.info('[submissions] Pruning %s to 500 submissions', self.processed_submissions_file)
-                            try:
-                                with open(self.processed_submissions_file, 'w') as file:
-                                    for submission in self.processed_submissions[-500:]:
-                                        file.write(submission + '\n')
-                                self.processed_submissions = self.processed_submissions[-500:]
-                            except IOError as e:
-                                logging.error('[submissions] IO error while writing to %s: %s', self.processed_submissions_file, e)
-            except (praw.exceptions.APIException,
-                    praw.exceptions.ClientException,
-                    prawcore.exceptions.RequestException) as e:
-                logging.warning('[submissions] Got an exception: %s', e)
-                logging.warning('[submissions] Will go to sleep for %d seconds', self.sleeptime)
-                time.sleep(self.sleeptime)
-            except KeyboardInterrupt:
-                logging.critical('[submissions] Bot has been killed by keyboard interrupt. Exiting')
-                sys.exit(0)
 
-    def handle_submission(self, submission):
-        logging.debug('[submissions] Processing new submission %s', submission.id)
-        if submission.selftext == '':
-            urls = re.findall(self.regex, submission.url)
+class MaxGoldtBotCommentParser(MaxGoldtBotEntityParser):
+    def __init__(self, config: Config):
+        self.entity_type: str = "comments"
+        super().__init__(config)
+        self.entity_provider = self.subreddit.stream.comments(skip_existing=True)
+
+    def extract_urls(self, entity) -> List[str]:
+        return re.findall(self.regex, entity.body)
+
+
+class MaxGoldtBotSubmissionParser(MaxGoldtBotEntityParser):
+    def __init__(self, config: Config):
+        self.entity_type: str = "submissions"
+        super().__init__(config)
+        self.entity_provider = self.subreddit.stream.submissions(skip_existing=True)
+
+    def extract_urls(self, entity) -> List[str]:
+        if entity.selftext == "":
+            return re.findall(self.regex, entity.url)
         else:
-            urls = re.findall(self.regex, submission.selftext)
-        if urls:
-            logging.info('[submissions] New submission %s with bild.de URLs found', submission.id)
-            archive_urls = []
-            bildplus = 0
-            for url in urls:
-                parsed_url = urlparse(url)
-                if parsed_url.path.startswith('/bild-plus/'):
-                    logging.info('[submissions] Skipping %s because it is probably a BILD+ link', url)
-                    bildplus += 1
-                    continue
-                logging.info('[submissions] Capturing %s', url)
-                archive_url = archiveis.capture(url)
-                if archive_url:
-                    archive_urls.append(archive_url)
-                    logging.info('[submissions] Captured: %s', archive_url)
-                else:
-                    logging.warning('[submissions] Got an empty archive.is URL back. Something is wrong')
-            if len(urls) != len(archive_urls) + bildplus:
-                logging.warning('[submissions] Found %d bild.de URLs, but got only %d archive.is links', len(urls), len(archive_urls))
-            if archive_urls:
-                links = "\n- ".join(archive_urls)
-                body = ("> Diese Zeitung ist ein Organ der Niedertracht. Es ist falsch, sie zu lesen.\n"
-                        "> Jemand, der zu dieser Zeitung beiträgt, ist gesellschaftlich absolut inakzeptabel.\n"
-                        "> Es wäre verfehlt, zu einem ihrer Redakteure freundlich oder auch nur höflich zu sein.\n"
-                        "> Man muß so unfreundlich zu ihnen sein, wie es das Gesetz gerade noch zuläßt.\n"
-                        "> Es sind schlechte Menschen, die Falsches tun.\n\n"
-                        "[Max Goldt](https://de.wikipedia.org/wiki/Max_Goldt), deutscher Schriftsteller\n\n"
-                        "Du kannst diesen Artikel auf archive.is lesen, wenn du nicht auf bild.de gehen willst:\n\n- " \
-                        + links + \
-                        "\n\n"
-                        "----\n\n"
-                        "^^[Info](https://www.reddit.com/r/MaxGoldtBot)&nbsp;|&nbsp;"
-                        "[Autor](https://www.reddit.com/u/pille1842)&nbsp;|&nbsp;"
-                        "[GitHub](https://github.com/pille1842/MaxGoldtBot)&nbsp;|&nbsp;"
-                        "[Warum&nbsp;die&nbsp;Bild&nbsp;schlecht&nbsp;ist]"
-                        "(http://www.bildblog.de/62600/warum-wir-gegen-die-bild-zeitung-kaempfen/)")
-                submission.reply(body)
-                logging.info('[submissions] Replied to %s with %d links', submission.id, len(archive_urls))
-            else:
-                logging.warning('[submissions] No reply to %s: %d bild.de links found, none archived', submission.id, len(urls))
-        else:
-            logging.debug('[submissions] No relevant URLs found in %s', submission.id)
+            return re.findall(self.regex, entity.selftext)
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--config', action='store', dest='config_file', default='MaxGoldtBot.ini',
-                    help='a configuration file to read from (default: MaxGoldtBot.ini)')
-parser.add_argument('--logfile', action='store', dest='logfile',
-                    help='a logfile to write to (default: stdout)')
-parser.add_argument('--loglevel', action='store', dest='loglevel', default='WARNING',
-                    help='a loglevel (default: WARNING)')
-parser.add_argument('--procfile', action='store', dest='procfile',
-                    help='a file to store processed comment IDs in')
-parser.add_argument('--prosfile', action='store', dest='prosfile',
-                    help='a file to store processed submission IDs in')
-parser.add_argument('--sleeptime', action='store', dest='sleeptime', default=15 * 60, type=int,
-                    help='number of seconds to sleep in case of an API exception')
-parser.add_argument('subreddit', action='store',
-                    help='subreddit to process comments from')
-arguments = parser.parse_args()
-numeric_level = getattr(logging, arguments.loglevel.upper(), None)
-if not isinstance(numeric_level, int):
-    raise ValueError('Invalid log level: %s' % arguments.loglevel)
-logformat = '[%(asctime)s] %(levelname)s: %(message)s'
-if arguments.logfile:
-    logging.basicConfig(level=numeric_level, format=logformat, filename=arguments.logfile)
-    logging.debug('Logging configuration: loglevel %s, logfile %s', arguments.loglevel, arguments.logfile)
-else:
-    logging.basicConfig(level=numeric_level, format=logformat)
-    logging.debug('Logging configuration: loglevel %s, display output', arguments.loglevel)
 
-logging.debug('Forking to let the child care about submissions')
-newpid = os.fork()
-if newpid == 0:
-    logging.info('Started handling submissions')
-    submission_parser = MaxGoldtBotSubmissionParser(arguments)
-    submission_parser.run()
-else:
-    logging.info('Started handling comments (submissions given to PID %d)', newpid)
-    comment_parser = MaxGoldtBotCommentParser(arguments)
-    comment_parser.run()
+if __name__ == "__main__":
+    config: Config = Config()
+
+    newpid: int = os.fork()
+    if newpid == 0:
+        logging.info("Started handling submissions")
+        submission_parser = MaxGoldtBotSubmissionParser(config)
+        submission_parser.run()
+    else:
+        logging.info("Started handling comments (submissions given to PID %d)", newpid)
+        comment_parser = MaxGoldtBotCommentParser(config)
+        comment_parser.run()

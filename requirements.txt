@@ -1,0 +1,2 @@
+archiveis==0.0.9
+praw==7.6.1
